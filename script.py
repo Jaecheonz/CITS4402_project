@@ -1,6 +1,9 @@
 import tkinter as tk
 from tkinter import filedialog
 from PIL import ImageTk, Image
+import cv2
+import numpy as np
+import time
 
 class ImageGUI:
     def __init__(self, master):
@@ -10,8 +13,12 @@ class ImageGUI:
 
         # Variables
         self.original_image = None
+        self.original_array = None
         self.current_file_path = ""
-
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+        
         # Main frame
         self.frame = tk.Frame(self.master)
         self.frame.pack(fill="both", expand=True, padx=4, pady=4)
@@ -61,6 +68,46 @@ class ImageGUI:
 
         return pil_image.resize((new_width, new_height))
 
+    def get_skin_mask(self, image_array):
+        hsv = cv2.cvtColor(image_array, cv2.COLOR_RGB2HSV)
+
+        lower_skin = np.array([0, 30, 60], dtype=np.uint8)
+        upper_skin = np.array([20, 170, 255], dtype=np.uint8)
+
+        skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+
+        kernel = np.ones((5, 5), np.uint8)
+        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
+        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel)
+
+        return skin_mask
+
+    def detect_faces(self, image_array):
+        gray = cv2.cvtColor(image_array, cv2.COLOR_RGB2GRAY)
+        skin_mask = self.get_skin_mask(image_array)
+
+        raw_faces = self.face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(60, 60)
+        )
+
+        output = image_array.copy()
+        valid_faces = []
+        debug_info = []
+
+        for (x, y, w, h) in raw_faces:
+            face_skin = skin_mask[y:y+h, x:x+w]
+            skin_ratio = np.count_nonzero(face_skin) / (w * h)
+            debug_info.append((x, y, w, h, skin_ratio))
+
+            if skin_ratio > 0.2:
+                valid_faces.append((x, y, w, h))
+                cv2.rectangle(output, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+        return output, raw_faces, valid_faces, debug_info, skin_mask
+    
     def load_image(self):
         # Open file dialog to choose an image
         file_path = filedialog.askopenfilename(
@@ -78,17 +125,34 @@ class ImageGUI:
 
         # Load image using PIL
         self.original_image = Image.open(file_path).convert("RGB")
-        # Display original image
-        display_image = self.resize_image(self.original_image)
-        photo = ImageTk.PhotoImage(display_image)
-        self.image_label.configure(image=photo)
-        self.image_label.image = photo
-        
-        # Show same image on output side as placeholder
-        self.filtered_label.configure(image=photo)
-        self.filtered_label.image = photo
-        self.message_1.configure(text="Single image loaded.")
-        self.message_2.configure(text="Processing not implemented yet.")
+        self.original_array = np.array(self.original_image)
+
+        # Display original image on left
+        display_input = self.resize_image(self.original_image)
+        input_photo = ImageTk.PhotoImage(display_input)
+        self.image_label.configure(image=input_photo)
+        self.image_label.image = input_photo
+
+        # Face detection timing
+        start_time = time.time()
+        detected_image, raw_faces, valid_faces, debug_info, skin_mask = self.detect_faces(self.original_array)
+        end_time = time.time()
+
+        # Convert detected result back to PIL for display
+        detected_pil = Image.fromarray(detected_image)
+        display_output = self.resize_image(detected_pil)
+        output_photo = ImageTk.PhotoImage(display_output)
+
+        # Show processed image on right
+        self.filtered_label.configure(image=output_photo)
+        self.filtered_label.image = output_photo
+        print("Raw faces:", len(raw_faces))
+        for item in debug_info:
+            x, y, w, h, skin_ratio = item
+            print(f"Box {(x, y, w, h)} skin_ratio={skin_ratio:.3f}")
+        # Status messages
+        self.message_1.configure(text=f"{len(valid_faces)} face(s) detected.")
+        self.message_2.configure(text=f"Processing time: {end_time - start_time:.3f} seconds")
 
     def bulk_processing(self):
         self.message_1.configure(text="Bulk processing not implemented yet.")
