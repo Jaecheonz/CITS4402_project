@@ -14,24 +14,23 @@ class ImageGUI:
 
         # Variables
         self.original_image = None
-        self.original_array = None
         self.current_file_path = ""
         
-        # model stuff
-        self.prototxt_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "models",
-            "opencv_face_detector.prototxt"
-        )
-        self.model_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "models",
-            "opencv_face_detector.caffemodel"
-        )
+        # Get the path to the models folder
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        models_dir = os.path.join(base_dir, "models")
+        
+        # Paths for the OpenCV face detector files
+        self.prototxt_path = os.path.join(models_dir, "opencv_face_detector.prototxt")
+        self.model_path = os.path.join(models_dir, "opencv_face_detector.caffemodel")
+        
+        # Stop the program early if either model file is missing
         if not os.path.exists(self.prototxt_path):
             raise FileNotFoundError(f"OpenCV prototxt not found: {self.prototxt_path}")
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"OpenCV caffemodel not found: {self.model_path}")
+        
+        # Load the pretrained OpenCV DNN face detector
         self.face_net = cv2.dnn.readNetFromCaffe(self.prototxt_path, self.model_path)
         
         # Main frame
@@ -84,13 +83,17 @@ class ImageGUI:
         return pil_image.resize((new_width, new_height))
 
     def get_skin_mask(self, image_array):
-        hsv = cv2.cvtColor(image_array, cv2.COLOR_RGB2HSV)
+        # Convert RGB image to HSV colour space
+        hsv_image = cv2.cvtColor(image_array, cv2.COLOR_RGB2HSV)
 
+        # Lower and upper HSV thresholds for skin-coloured pixels
         lower_skin = np.array([0, 30, 60], dtype=np.uint8)
         upper_skin = np.array([20, 170, 255], dtype=np.uint8)
-
-        skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
-
+        
+        # Create binary mask where skin-coloured pixels are white
+        skin_mask = cv2.inRange(hsv_image, lower_skin, upper_skin)
+        
+        # Clean up small noise and fill small gaps
         kernel = np.ones((5, 5), np.uint8)
         skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
         skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel)
@@ -98,60 +101,62 @@ class ImageGUI:
         return skin_mask
 
     def detect_faces(self, image_array):
+        # Create skin mask for the whole image
         skin_mask = self.get_skin_mask(image_array)
-        output = image_array.copy()
+        # Copy image so rectangles can be drawn on it
+        output_image = image_array.copy()
+        
+        # Lists for debugging and final accepted faces
+        raw_faces = []
         valid_faces = []
         debug_info = []
-
+        
+        # Get original image size
         image_height, image_width = image_array.shape[:2]
-
-        blob = cv2.dnn.blobFromImage(
-            cv2.resize(image_array, (300, 300)),
-            1.0,
-            (300, 300),
-            (104.0, 177.0, 123.0)
-        )
-
+        # Prepare image for OpenCV DNN face detector
+        blob = cv2.dnn.blobFromImage(cv2.resize(image_array, (300, 300)), scalefactor=1.0, size=(300, 300), mean=(104.0, 177.0, 123.0))
+        # Run face detector
         self.face_net.setInput(blob)
         detections = self.face_net.forward()
 
-        raw_faces = []
-
+        # Loop through all detections
         for i in range(detections.shape[2]):
             confidence = detections[0, 0, i, 2]
-
+            
+            # Ignore weak detections
             if confidence < 0.5:
                 continue
+            
+            # Convert normalized box coordinates back to original image coordinates
+            box = detections[0, 0, i, 3:7] * np.array([image_width, image_height, image_width, image_height])
+            start_x, start_y, end_x, end_y = box.astype("int")
 
-            box = detections[0, 0, i, 3:7] * np.array(
-                [image_width, image_height, image_width, image_height]
-            )
-            x1, y1, x2, y2 = box.astype("int")
+            # Clamp coordinates so they stay inside the image
+            start_x = max(0, start_x)
+            start_y = max(0, start_y)
+            end_x = min(image_width - 1, end_x)
+            end_y = min(image_height - 1, end_y)
+            # Compute width and height of the detection box
+            box_width = end_x - start_x
+            box_height = end_y - start_y
 
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(image_width - 1, x2)
-            y2 = min(image_height - 1, y2)
-
-            w = x2 - x1
-            h = y2 - y1
-
-            if w <= 0 or h <= 0:
+            # Skip invalid boxes
+            if box_width <= 0 or box_height <= 0:
                 continue
 
-            raw_faces.append((x1, y1, w, h, confidence))
-
-            face_skin = skin_mask[y1:y2, x1:x2]
-            skin_ratio = np.count_nonzero(face_skin) / (w * h)
-
-            debug_info.append((x1, y1, w, h, confidence, skin_ratio))
-
-            # Light skin-assist rule only
+            # Store raw detection before skin filtering
+            raw_faces.append((start_x, start_y, box_width, box_height, confidence))
+            # Measure how much of the detected region looks like skin
+            face_skin_region = skin_mask[start_y:end_y, start_x:end_x]
+            skin_ratio = np.count_nonzero(face_skin_region) / (box_width * box_height)
+            # Save debug information
+            debug_info.append((start_x, start_y, box_width, box_height, confidence, skin_ratio))
+            # Use skin-colour segmentation as a secondary check to help reject unlikely face detections
             if skin_ratio > 0.05:
-                valid_faces.append((x1, y1, w, h, confidence))
-                cv2.rectangle(output, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                valid_faces.append((start_x, start_y, box_width, box_height, confidence))
+                cv2.rectangle(output_image, (start_x, start_y), (end_x, end_y), (0, 255, 0), 2)
 
-        return output, raw_faces, valid_faces, debug_info, skin_mask
+        return output_image, raw_faces, valid_faces, debug_info
     
     def load_image(self):
         # Open file dialog to choose an image
@@ -170,7 +175,7 @@ class ImageGUI:
 
         # Load image using PIL
         self.original_image = Image.open(file_path).convert("RGB")
-        self.original_array = np.array(self.original_image)
+        original_array = np.array(self.original_image)
 
         # Display original image on left
         display_input = self.resize_image(self.original_image)
@@ -180,7 +185,7 @@ class ImageGUI:
 
         # Face detection timing
         start_time = time.time()
-        detected_image, raw_faces, valid_faces, debug_info, skin_mask = self.detect_faces(self.original_array)
+        detected_image, raw_faces, valid_faces, debug_info = self.detect_faces(original_array)
         end_time = time.time()
 
         # Convert detected result back to PIL for display
