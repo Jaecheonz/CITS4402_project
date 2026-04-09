@@ -4,6 +4,7 @@ from PIL import ImageTk, Image
 import cv2
 import numpy as np
 import time
+import os
 
 class ImageGUI:
     def __init__(self, master):
@@ -15,9 +16,23 @@ class ImageGUI:
         self.original_image = None
         self.original_array = None
         self.current_file_path = ""
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        
+        # model stuff
+        self.prototxt_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "models",
+            "opencv_face_detector.prototxt"
         )
+        self.model_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "models",
+            "opencv_face_detector.caffemodel"
+        )
+        if not os.path.exists(self.prototxt_path):
+            raise FileNotFoundError(f"OpenCV prototxt not found: {self.prototxt_path}")
+        if not os.path.exists(self.model_path):
+            raise FileNotFoundError(f"OpenCV caffemodel not found: {self.model_path}")
+        self.face_net = cv2.dnn.readNetFromCaffe(self.prototxt_path, self.model_path)
         
         # Main frame
         self.frame = tk.Frame(self.master)
@@ -83,28 +98,58 @@ class ImageGUI:
         return skin_mask
 
     def detect_faces(self, image_array):
-        gray = cv2.cvtColor(image_array, cv2.COLOR_RGB2GRAY)
         skin_mask = self.get_skin_mask(image_array)
-
-        raw_faces = self.face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(60, 60)
-        )
-
         output = image_array.copy()
         valid_faces = []
         debug_info = []
 
-        for (x, y, w, h) in raw_faces:
-            face_skin = skin_mask[y:y+h, x:x+w]
-            skin_ratio = np.count_nonzero(face_skin) / (w * h)
-            debug_info.append((x, y, w, h, skin_ratio))
+        image_height, image_width = image_array.shape[:2]
 
-            if skin_ratio > 0.2:
-                valid_faces.append((x, y, w, h))
-                cv2.rectangle(output, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        blob = cv2.dnn.blobFromImage(
+            cv2.resize(image_array, (300, 300)),
+            1.0,
+            (300, 300),
+            (104.0, 177.0, 123.0)
+        )
+
+        self.face_net.setInput(blob)
+        detections = self.face_net.forward()
+
+        raw_faces = []
+
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+
+            if confidence < 0.5:
+                continue
+
+            box = detections[0, 0, i, 3:7] * np.array(
+                [image_width, image_height, image_width, image_height]
+            )
+            x1, y1, x2, y2 = box.astype("int")
+
+            x1 = max(0, x1)
+            y1 = max(0, y1)
+            x2 = min(image_width - 1, x2)
+            y2 = min(image_height - 1, y2)
+
+            w = x2 - x1
+            h = y2 - y1
+
+            if w <= 0 or h <= 0:
+                continue
+
+            raw_faces.append((x1, y1, w, h, confidence))
+
+            face_skin = skin_mask[y1:y2, x1:x2]
+            skin_ratio = np.count_nonzero(face_skin) / (w * h)
+
+            debug_info.append((x1, y1, w, h, confidence, skin_ratio))
+
+            # Light skin-assist rule only
+            if skin_ratio > 0.05:
+                valid_faces.append((x1, y1, w, h, confidence))
+                cv2.rectangle(output, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
         return output, raw_faces, valid_faces, debug_info, skin_mask
     
@@ -146,13 +191,23 @@ class ImageGUI:
         # Show processed image on right
         self.filtered_label.configure(image=output_photo)
         self.filtered_label.image = output_photo
-        print("Raw faces:", len(raw_faces))
-        for item in debug_info:
-            x, y, w, h, skin_ratio = item
-            print(f"Box {(x, y, w, h)} skin_ratio={skin_ratio:.3f}")
+        
         # Status messages
         self.message_1.configure(text=f"{len(valid_faces)} face(s) detected.")
         self.message_2.configure(text=f"Processing time: {end_time - start_time:.3f} seconds")
+        
+        # debug info
+        image_name = os.path.basename(self.current_file_path)
+        print(f"\nImage: {image_name}")
+        print("Raw faces:", len(raw_faces))
+        for item in debug_info:
+            x, y, w, h, confidence, skin_ratio = item
+            print(
+                f"Box {(x, y, w, h)} "
+                f"confidence={confidence:.3f} "
+                f"skin_ratio={skin_ratio:.3f}"
+            )
+        print("-" * 50)
 
     def bulk_processing(self):
         self.message_1.configure(text="Bulk processing not implemented yet.")
