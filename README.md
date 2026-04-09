@@ -17,21 +17,37 @@ source .venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
-### 4. Download the OpenCV DNN face detector model
+### 4. Download the face detector and landmark model files
 ```bash
 mkdir -p models
 
+# OpenCV DNN face detector files
 wget -O models/opencv_face_detector.prototxt \
   https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt
 
 wget -O models/opencv_face_detector.caffemodel \
   https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel
+
+# dlib 5-point facial landmark model
+wget -O models/shape_predictor_5_face_landmarks.dat.bz2 \
+  http://dlib.net/files/shape_predictor_5_face_landmarks.dat.bz2
+
+bzip2 -dk models/shape_predictor_5_face_landmarks.dat.bz2
 ```
-## If the script cannot find the model, check that:
-the path is correct
-the file exists
-the file is not empty
-Running the script
+## Notes
+- The `models/` folder is ignored by Git, so the model files must be downloaded locally.
+- The required model files must be saved at:
+  - `models/opencv_face_detector.prototxt`
+  - `models/opencv_face_detector.caffemodel`
+  - `models/shape_predictor_5_face_landmarks.dat`
+
+## If the script cannot find the model files, check that:
+- the paths are correct
+- all files exist
+- none of the files are empty
+- the `.bz2` file has been extracted so that `shape_predictor_5_face_landmarks.dat` is present
+
+## Running the script
 ```bash
 python script.py
 ```

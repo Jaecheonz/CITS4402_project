@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import time
 import os
+import dlib
 
 class ImageGUI:
     def __init__(self, master):
@@ -23,15 +24,21 @@ class ImageGUI:
         # Paths for the OpenCV face detector files
         self.prototxt_path = os.path.join(models_dir, "opencv_face_detector.prototxt")
         self.model_path = os.path.join(models_dir, "opencv_face_detector.caffemodel")
-        
         # Stop the program early if either model file is missing
         if not os.path.exists(self.prototxt_path):
             raise FileNotFoundError(f"OpenCV prototxt not found: {self.prototxt_path}")
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"OpenCV caffemodel not found: {self.model_path}")
-        
         # Load the pretrained OpenCV DNN face detector
         self.face_net = cv2.dnn.readNetFromCaffe(self.prototxt_path, self.model_path)
+        
+        # Path for dlib 5-point facial landmark model
+        self.landmark_model_path = os.path.join(models_dir, "shape_predictor_5_face_landmarks.dat")
+        # Stop the program early if landmark model file is missing
+        if not os.path.exists(self.landmark_model_path):
+            raise FileNotFoundError(f"dlib landmark model not found: {self.landmark_model_path}")
+        # Load pretrained dlib 5-point landmark predictor
+        self.landmark_predictor = dlib.shape_predictor(self.landmark_model_path)
         
         # Main frame
         self.frame = tk.Frame(self.master)
@@ -158,6 +165,58 @@ class ImageGUI:
 
         return output_image, raw_faces, valid_faces, debug_info
     
+    def detect_landmarks(self, image_array, valid_faces):
+        # List to hold landmark results for each valid face
+        landmarks_per_face = []
+        
+        # Loop through each valid detected face and run dlib landmark detection on it
+        for (start_x, start_y, box_width, box_height, confidence) in valid_faces:
+            end_x = start_x + box_width
+            end_y = start_y + box_height
+
+            # Create dlib rectangle from detected face box
+            face_rect = dlib.rectangle(start_x, start_y, end_x, end_y)
+            # Run landmark detection only inside this face region
+            shape = self.landmark_predictor(image_array, face_rect)
+
+            # dlib 5-point model:
+            # points 0-1 = one eye corners
+            # points 2-3 = other eye corners
+            # point 4 = nose point
+            points = []
+            for i in range(5):
+                points.append((shape.part(i).x, shape.part(i).y))
+
+            # Compute eye centres from the two corner points for each eye
+            right_eye_centre = ((points[0][0] + points[1][0]) // 2, (points[0][1] + points[1][1]) // 2)
+            left_eye_centre = ((points[2][0] + points[3][0]) // 2, (points[2][1] + points[3][1]) // 2)
+            nose_tip = points[4]
+
+            landmarks_per_face.append({
+                "box": (start_x, start_y, box_width, box_height, confidence),
+                "right_eye": right_eye_centre,
+                "left_eye": left_eye_centre,
+                "nose": nose_tip
+            })
+
+        return landmarks_per_face
+    
+    def draw_landmarks(self, image_array, landmarks_per_face):
+        output_image = image_array.copy()
+
+        # Process the landmarks for each face and draw them on the output image
+        for face_data in landmarks_per_face:
+            right_eye = face_data["right_eye"]
+            left_eye = face_data["left_eye"]
+            nose = face_data["nose"]
+
+            # Draw circles for the 3 required landmarks
+            cv2.circle(output_image, right_eye, 4, (255, 0, 0), -1)   # blue
+            cv2.circle(output_image, left_eye, 4, (0, 255, 0), -1)    # green
+            cv2.circle(output_image, nose, 4, (0, 0, 255), -1)        # red
+
+        return output_image
+    
     def load_image(self):
         # Open file dialog to choose an image
         file_path = filedialog.askopenfilename(
@@ -183,9 +242,11 @@ class ImageGUI:
         self.image_label.configure(image=input_photo)
         self.image_label.image = input_photo
 
-        # Face detection timing
+        # Face detection + landmark timing
         start_time = time.time()
         detected_image, raw_faces, valid_faces, debug_info = self.detect_faces(original_array)
+        landmarks_per_face = self.detect_landmarks(original_array, valid_faces)
+        detected_image = self.draw_landmarks(detected_image, landmarks_per_face)
         end_time = time.time()
 
         # Convert detected result back to PIL for display
@@ -201,7 +262,7 @@ class ImageGUI:
         self.message_1.configure(text=f"{len(valid_faces)} face(s) detected.")
         self.message_2.configure(text=f"Processing time: {end_time - start_time:.3f} seconds")
         
-        # debug info
+        # Debug info
         image_name = os.path.basename(self.current_file_path)
         print(f"\nImage: {image_name}")
         print("Raw faces:", len(raw_faces))
@@ -211,6 +272,13 @@ class ImageGUI:
                 f"Box {(x, y, w, h)} "
                 f"confidence={confidence:.3f} "
                 f"skin_ratio={skin_ratio:.3f}"
+            )
+        print("Landmarks:")
+        for face_data in landmarks_per_face:
+            print(
+                f"right_eye={face_data['right_eye']} "
+                f"left_eye={face_data['left_eye']} "
+                f"nose={face_data['nose']}"
             )
         print("-" * 50)
 
