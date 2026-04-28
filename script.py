@@ -188,9 +188,21 @@ class ImageGUI:
                 points.append((shape.part(i).x, shape.part(i).y))
 
             # Compute eye centres from the two corner points for each eye
-            right_eye_centre = ((points[0][0] + points[1][0]) // 2, (points[0][1] + points[1][1]) // 2)
-            left_eye_centre = ((points[2][0] + points[3][0]) // 2, (points[2][1] + points[3][1]) // 2)
+            right_eye_centre = (
+                (points[0][0] + points[1][0]) // 2,
+                (points[0][1] + points[1][1]) // 2
+            )
+            left_eye_centre = (
+                (points[2][0] + points[3][0]) // 2,
+                (points[2][1] + points[3][1]) // 2
+            )
+
+            # Original 5-point nose
             nose_tip = points[4]
+
+            # Move nose slightly upward to correct the low placement
+            nose_offset = int(box_height * 0.04)
+            nose_tip = (nose_tip[0], nose_tip[1] - nose_offset)
 
             landmarks_per_face.append({
                 "box": (start_x, start_y, box_width, box_height, confidence),
