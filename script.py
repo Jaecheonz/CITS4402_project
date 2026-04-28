@@ -200,9 +200,40 @@ class ImageGUI:
             # Original 5-point nose
             nose_tip = points[4]
 
-            # Move nose slightly upward to correct the low placement
-            nose_offset = int(box_height * 0.04)
-            nose_tip = (nose_tip[0], nose_tip[1] - nose_offset)
+            nose_x = nose_tip[0]
+            nose_y = nose_tip[1]
+
+            # Midpoint between the two eye centres
+            eye_mid_x = (right_eye_centre[0] + left_eye_centre[0]) // 2
+
+            # Distance between the eyes
+            eye_distance = abs(left_eye_centre[0] - right_eye_centre[0])
+
+            # Measure how tilted the face is using the eye vertical difference
+            eye_vertical_diff = abs(left_eye_centre[1] - right_eye_centre[1])
+
+            # Default values for more frontal faces
+            nose_offset_ratio = 0.04
+            side_shift_ratio = 0.20
+
+            # If the face is noticeably tilted, reduce the heuristic strength
+            if eye_vertical_diff > int(eye_distance * 0.12):
+                nose_offset_ratio = 0.02
+                side_shift_ratio = 0.30
+
+            # Apply upward correction
+            nose_offset = int(box_height * nose_offset_ratio)
+            nose_y = nose_y - nose_offset
+
+            # Limit left-right drift from the eye midpoint
+            max_side_shift = int(eye_distance * side_shift_ratio)
+
+            if nose_x < eye_mid_x - max_side_shift:
+                nose_x = eye_mid_x - max_side_shift
+            elif nose_x > eye_mid_x + max_side_shift:
+                nose_x = eye_mid_x + max_side_shift
+
+            nose_tip = (nose_x, nose_y)
 
             landmarks_per_face.append({
                 "box": (start_x, start_y, box_width, box_height, confidence),
@@ -229,6 +260,110 @@ class ImageGUI:
 
         return output_image
     
+    def align_and_crop_face(self, image_array, face_data):
+        eye_a = face_data["right_eye"]
+        eye_b = face_data["left_eye"]
+
+        # Sort eyes by x-position so left-side eye is always first
+        if eye_a[0] < eye_b[0]:
+            left_eye_img = eye_a
+            right_eye_img = eye_b
+        else:
+            left_eye_img = eye_b
+            right_eye_img = eye_a
+
+        left_eye_img = np.array(left_eye_img, dtype=np.float32)
+        right_eye_img = np.array(right_eye_img, dtype=np.float32)
+
+        # Eye direction
+        dx = right_eye_img[0] - left_eye_img[0]
+        dy = right_eye_img[1] - left_eye_img[1]
+        angle = np.degrees(np.arctan2(dy, dx))
+
+        # Eye distance scaling
+        src_eye_distance = np.sqrt(dx * dx + dy * dy)
+        dst_eye_distance = 85 - 40
+
+        if src_eye_distance < 1:
+            return np.zeros((125, 125, 3), dtype=np.uint8), None
+
+        scale = dst_eye_distance / src_eye_distance
+
+        # Midpoint between the eyes in source image
+        eyes_center_src = (
+            (left_eye_img[0] + right_eye_img[0]) / 2.0,
+            (left_eye_img[1] + right_eye_img[1]) / 2.0
+        )
+
+        # Midpoint between target eye locations
+        eyes_center_dst = (
+            (40 + 85) / 2.0,
+            40
+        )
+
+        # Rotation + scale matrix
+        transform_matrix = cv2.getRotationMatrix2D(eyes_center_src, angle, scale)
+
+        # Translate so eye midpoint lands in the target position
+        transform_matrix[0, 2] += eyes_center_dst[0] - eyes_center_src[0]
+        transform_matrix[1, 2] += eyes_center_dst[1] - eyes_center_src[1]
+
+        # Warp to aligned 125 x 125 portrait
+        aligned_face = cv2.warpAffine(image_array, transform_matrix, (125, 125))
+
+        return aligned_face, transform_matrix
+
+    def draw_landmarks_on_aligned_face(self, aligned_face, face_data, transform_matrix):
+        output_face = aligned_face.copy()
+
+        # Fixed eye landmark positions in the aligned image
+        left_eye = (40, 40)
+        right_eye = (85, 40)
+
+        # Transform the original-image nose into aligned portrait coordinates
+        original_nose = face_data["nose"]
+        nose_x = int(
+            transform_matrix[0, 0] * original_nose[0] +
+            transform_matrix[0, 1] * original_nose[1] +
+            transform_matrix[0, 2]
+        )
+        nose_y = int(
+            transform_matrix[1, 0] * original_nose[0] +
+            transform_matrix[1, 1] * original_nose[1] +
+            transform_matrix[1, 2]
+        )
+
+        # Optional safety clamp so rare bad noses do not go too far off in the portrait
+        nose_x = max(53, min(73, nose_x))
+        nose_y = max(60, min(80, nose_y))
+
+        nose = (nose_x, nose_y)
+
+        cv2.circle(output_face, right_eye, 4, (255, 0, 0), -1)   # blue
+        cv2.circle(output_face, left_eye, 4, (0, 255, 0), -1)    # green
+        cv2.circle(output_face, nose, 4, (0, 0, 255), -1)        # red
+
+        return output_face
+    
+    def place_faces_in_corners(self, image_array, aligned_faces):
+        output_image = image_array.copy()
+        image_height, image_width = output_image.shape[:2]
+
+        # Corner positions for 125 x 125 aligned faces
+        corner_positions = [
+            (0, 0),                                   # top-left
+            (image_width - 125, 0),                  # top-right
+            (0, image_height - 125),                 # bottom-left
+            (image_width - 125, image_height - 125)  # bottom-right
+        ]
+
+        for i in range(min(len(aligned_faces), 4)):
+            x, y = corner_positions[i]
+            output_image[y:y+125, x:x+125] = aligned_faces[i]
+            cv2.rectangle(output_image, (x, y), (x + 124, y + 124), (255, 255, 255), 2)
+
+        return output_image
+
     def load_image(self):
         # Open file dialog to choose an image
         file_path = filedialog.askopenfilename(
@@ -258,7 +393,23 @@ class ImageGUI:
         start_time = time.time()
         detected_image, raw_faces, valid_faces, debug_info = self.detect_faces(original_array)
         landmarks_per_face = self.detect_landmarks(original_array, valid_faces)
+
+        # Sort faces from left to right
+        landmarks_per_face.sort(key=lambda face_data: face_data["box"][0])
+
+        # Draw landmarks on the original image
         detected_image = self.draw_landmarks(detected_image, landmarks_per_face)
+
+        # Align each detected face to 125 x 125 and draw landmarks on it
+        aligned_faces = []
+        for face_data in landmarks_per_face:
+            aligned_face, transform_matrix = self.align_and_crop_face(original_array, face_data)
+            aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
+            aligned_faces.append(aligned_face)
+
+        # Paste aligned faces into the four corners of the output image
+        detected_image = self.place_faces_in_corners(detected_image, aligned_faces)
+
         end_time = time.time()
 
         # Convert detected result back to PIL for display
