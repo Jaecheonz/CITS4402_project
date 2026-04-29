@@ -445,9 +445,180 @@ class ImageGUI:
             )
         print("-" * 50)
 
+    def process_single_image_to_file(self, file_path, output_dir):
+            """Run the full detection pipeline on one image and save the result."""
+            image = Image.open(file_path).convert("RGB")
+            image_array = np.array(image)
+
+            detected_image, _, valid_faces, debug_info = self.detect_faces(image_array)
+            landmarks_per_face = self.detect_landmarks(image_array, valid_faces)
+
+            landmarks_per_face.sort(key=lambda face_data: face_data["box"][0])
+
+            detected_image = self.draw_landmarks(detected_image, landmarks_per_face)
+
+            aligned_faces = []
+            for face_data in landmarks_per_face:
+                aligned_face, transform_matrix = self.align_and_crop_face(image_array, face_data)
+                aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
+                aligned_faces.append(aligned_face)
+
+            detected_image = self.place_faces_in_corners(detected_image, aligned_faces)
+
+            # Debug output to console
+            image_name = os.path.basename(file_path)
+            print(f"\nImage: {image_name}")
+            print("Raw detections debug:")
+            for item in debug_info:
+                x, y, w, h, confidence, skin_ratio = item
+                print(
+                    f"  Box {(x, y, w, h)} "
+                    f"confidence={confidence:.3f} "
+                    f"skin_ratio={skin_ratio:.3f}"
+                )
+            print("Landmarks:")
+            for face_data in landmarks_per_face:
+                print(
+                    f"  right_eye={face_data['right_eye']} "
+                    f"left_eye={face_data['left_eye']} "
+                    f"nose={face_data['nose']}"
+                )
+            print("-" * 50)
+
+            # Save result to output directory, preserving original filename
+            output_path = os.path.join(output_dir, image_name)
+            result_pil = Image.fromarray(detected_image)
+            result_pil.save(output_path)
+
+            return len(valid_faces)
+
+    #Runs the full face detection process on one image but saves the results insteads of displaying it (for bulk process use only)
+    def process_single_image_to_file(self, file_path, output_dir):
+            image = Image.open(file_path).convert("RGB")
+            image_array = np.array(image)
+
+            detected_image, _, valid_faces, debug_info = self.detect_faces(image_array)
+            landmarks_per_face = self.detect_landmarks(image_array, valid_faces)
+
+            landmarks_per_face.sort(key=lambda face_data: face_data["box"][0])
+
+            detected_image = self.draw_landmarks(detected_image, landmarks_per_face)
+
+            aligned_faces = []
+            for face_data in landmarks_per_face:
+                aligned_face, transform_matrix = self.align_and_crop_face(image_array, face_data)
+                aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
+                aligned_faces.append(aligned_face)
+
+            detected_image = self.place_faces_in_corners(detected_image, aligned_faces)
+
+            # Debug output to console
+            image_name = os.path.basename(file_path)
+            print(f"\nImage: {image_name}")
+            print("Raw detections debug:")
+            for item in debug_info:
+                x, y, w, h, confidence, skin_ratio = item
+                print(
+                    f"  Box {(x, y, w, h)} "
+                    f"confidence={confidence:.3f} "
+                    f"skin_ratio={skin_ratio:.3f}"
+                )
+            print("Landmarks:")
+            for face_data in landmarks_per_face:
+                print(
+                    f"  right_eye={face_data['right_eye']} "
+                    f"left_eye={face_data['left_eye']} "
+                    f"nose={face_data['nose']}"
+                )
+            print("-" * 50)
+
+            # Save result to output directory, preserving original filename
+            output_path = os.path.join(output_dir, image_name)
+            result_pil = Image.fromarray(detected_image)
+            result_pil.save(output_path)
+
+            return len(valid_faces)
+
     def bulk_processing(self):
-        self.message_1.configure(text="Bulk processing not implemented yet.")
-        self.message_2.configure(text="")
+        # Let the user pick a folder of input images
+        folder_path = filedialog.askdirectory(title="Select Folder Containing Images")
+        if not folder_path:
+            return
+
+        # Collect all supported image files in the selected folder (non-recursive)
+        supported_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".gif"}
+        image_files = [
+            os.path.join(folder_path, f)
+            for f in os.listdir(folder_path)
+            if os.path.isfile(os.path.join(folder_path, f))
+            and os.path.splitext(f)[1].lower() in supported_extensions
+        ]
+
+        if not image_files:
+            self.message_1.configure(text="No image files found in the selected folder.")
+            self.message_2.configure(text="")
+            return
+
+        # Create output subfolder inside the selected folder
+        output_dir = os.path.join(folder_path, "processed")
+        os.makedirs(output_dir, exist_ok=True)
+
+        self.message_1.configure(text=f"Processing {len(image_files)} image(s)…")
+        self.message_2.configure(text="Please wait.")
+        self.master.update_idletasks()
+
+        total_faces = 0
+        errors = 0
+        bulk_start = time.time()
+
+        for idx, file_path in enumerate(image_files, start=1):
+            # Update status for each image so the user can see progress
+            self.message_1.configure(
+                text=f"Processing image {idx} of {len(image_files)}: "
+                        f"{os.path.basename(file_path)}"
+            )
+            self.master.update_idletasks()
+
+            try:
+                faces_found = self.process_single_image_to_file(file_path, output_dir)
+                total_faces += faces_found
+            except Exception as exc:
+                errors += 1
+                print(f"ERROR processing {file_path}: {exc}")
+
+        bulk_end = time.time()
+        elapsed = bulk_end - bulk_start
+
+        # Show the last processed image in the GUI as a preview
+        if image_files:
+            last_file = image_files[-1]
+            try:
+                last_input = Image.open(last_file).convert("RGB")
+                display_input = self.resize_image(last_input)
+                input_photo = ImageTk.PhotoImage(display_input)
+                self.image_label.configure(image=input_photo)
+                self.image_label.image = input_photo
+
+                last_output_path = os.path.join(output_dir, os.path.basename(last_file))
+                if os.path.exists(last_output_path):
+                    last_output = Image.open(last_output_path).convert("RGB")
+                    display_output = self.resize_image(last_output)
+                    output_photo = ImageTk.PhotoImage(display_output)
+                    self.filtered_label.configure(image=output_photo)
+                    self.filtered_label.image = output_photo
+            except Exception:
+                pass
+
+        success_count = len(image_files) - errors
+        self.message_1.configure(
+            text=f"Done — {success_count}/{len(image_files)} image(s) processed, "
+                    f"{total_faces} face(s) detected total."
+                    + (f" ({errors} error(s))" if errors else "")
+        )
+        self.message_2.configure(
+            text=f"Results saved to: …/{os.path.basename(folder_path)}/processed/   "
+                    f"({elapsed:.1f}s)"
+        )
 
 if __name__ == "__main__":
     root = tk.Tk()
