@@ -6,7 +6,7 @@ import numpy as np
 import time
 import os
 import dlib
-from sklearn.cluster import DBSCAN
+import networkx as nx
 
 class ImageGUI:
     def __init__(self, master):
@@ -561,35 +561,53 @@ class ImageGUI:
             vec = np.array(descriptor, dtype=np.float32)
             vectors.append(vec)
  
-        X = np.array(vectors)
+        # --- Chinese Whispers clustering ---
+        # Build a graph where each face is a node; connect faces whose
+        # Euclidean distance is below THRESHOLD (i.e. likely the same person)
+        # THRESHOLD: max distance to connect two faces
+        #   lower = stricter (more clusters); recommended range 0.4–0.6
+        THRESHOLD = 0.55   # <-- tune this to adjust cluster sensitivity
  
-        # --- DBSCAN clustering ---
-        # eps: max Euclidean distance between two faces to be considered neighbours
-        #      dlib embeddings work well in range 0.4–0.6; lower = stricter (more clusters)
-        # min_samples: minimum faces in a neighbourhood to form a core point
-        #              set to 1 so even a single unique face forms its own cluster
-        EPS = 0.55         # <-- tune this to adjust cluster sensitivity
-        MIN_SAMPLES = 1    # <-- keep at 1 so lone faces still get an identity
-        db = DBSCAN(eps=EPS, min_samples=MIN_SAMPLES, metric="euclidean").fit(X)
-        raw_labels = db.labels_
+        G = nx.Graph()
+        G.add_nodes_from(range(len(vectors)))
  
-        # Remap labels to 0-based consecutive integers (DBSCAN uses -1 for noise;
-        # with min_samples=1 there should be no noise, but handle it just in case
-        # by assigning each noise point its own unique cluster)
-        label_map = {}
-        next_id = 0
-        labels = []
-        for l in raw_labels:
-            if l == -1:
-                labels.append(next_id)
-                next_id += 1
-            else:
-                if l not in label_map:
-                    label_map[l] = next_id
-                    next_id += 1
-                labels.append(label_map[l])
+        for i in range(len(vectors)):
+            for j in range(i + 1, len(vectors)):
+                dist = float(np.linalg.norm(vectors[i] - vectors[j]))
+                if dist < THRESHOLD:
+                    # Closer faces get stronger edge weights
+                    G.add_edge(i, j, weight=1.0 - dist)
  
-        num_clusters = next_id
+        # Each node starts as its own cluster label
+        labels = list(range(len(vectors)))
+        nodes = list(G.nodes())
+ 
+        # Iteratively propagate labels: each node adopts the label
+        # most strongly connected to it among its neighbours
+        for _ in range(100):
+            np.random.shuffle(nodes)
+            changed = False
+            for node in nodes:
+                neighbours = list(G.neighbors(node))
+                if not neighbours:
+                    continue
+                label_weights = {}
+                for nb in neighbours:
+                    lbl = labels[nb]
+                    w = G[node][nb]['weight']
+                    label_weights[lbl] = label_weights.get(lbl, 0) + w
+                best_label = max(label_weights, key=label_weights.get)
+                if best_label != labels[node]:
+                    labels[node] = best_label
+                    changed = True
+            if not changed:
+                break
+ 
+        # Remap raw labels to consecutive 0-based integers
+        unique_labels = sorted(set(labels))
+        label_map = {old_lbl: new_lbl for new_lbl, old_lbl in enumerate(unique_labels)}
+        labels = [label_map[l] for l in labels]
+        num_clusters = len(unique_labels)
         print(f"\nIdentity clustering: {len(face_crops)} face(s) → {num_clusters} unique identity/identities")
         for cid in range(num_clusters):
             members = [i for i, l in enumerate(labels) if l == cid]

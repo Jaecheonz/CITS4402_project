@@ -57,7 +57,7 @@ bzip2 -dk models/dlib_face_recognition_resnet_model_v1.dat.bz2
 - all files exist
 - none of the files are empty
 - the 2 `.bz2` files has been extracted so that `shape_predictor_5_face_landmarks.dat` and `dlib_face_recognition_resnet_model_v1.dat` is present
-- To control the strictness in clustering faces (DBSCAN), change the epsilon value in line 571. Larger number for looser clusters and smaller number for stricter     clusters
+- To control the strictness in clustering faces (Chinese whispers), change the epsilon value in line 569. Larger number for less clusters, looser clusters and smaller number for more clusters, stricter     clusters
 ## Running the script
 ```bash
 python script.py
