@@ -33,6 +33,17 @@ wget -O models/shape_predictor_5_face_landmarks.dat.bz2 \
   http://dlib.net/files/shape_predictor_5_face_landmarks.dat.bz2
 
 bzip2 -dk models/shape_predictor_5_face_landmarks.dat.bz2
+
+# dlib face recognition ResNet model
+# Windows (PowerShell):
+curl -o models/dlib_face_recognition_resnet_model_v1.dat.bz2 \
+  http://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2
+python -c "import bz2, shutil; shutil.copyfileobj(bz2.open('models/dlib_face_recognition_resnet_model_v1.dat.bz2', 'rb'), open('models/dlib_face_recognition_resnet_model_v1.dat', 'wb'))"
+
+# macOS/Linux:
+wget -O models/dlib_face_recognition_resnet_model_v1.dat.bz2 \
+  http://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2
+bzip2 -dk models/dlib_face_recognition_resnet_model_v1.dat.bz2
 ```
 ## Notes
 - The `models/` folder is ignored by Git, so the model files must be downloaded locally.
@@ -40,13 +51,13 @@ bzip2 -dk models/shape_predictor_5_face_landmarks.dat.bz2
   - `models/opencv_face_detector.prototxt`
   - `models/opencv_face_detector.caffemodel`
   - `models/shape_predictor_5_face_landmarks.dat`
-
+  - `models/dlib_face_recognition_resnet_model_v1.dat`
 ## If the script cannot find the model files, check that:
 - the paths are correct
 - all files exist
 - none of the files are empty
-- the `.bz2` file has been extracted so that `shape_predictor_5_face_landmarks.dat` is present
-
+- the 2 `.bz2` files has been extracted so that `shape_predictor_5_face_landmarks.dat` and `dlib_face_recognition_resnet_model_v1.dat` is present
+- To control the strictness in clustering faces (DBSCAN), change the epsilon value in line 571. Larger number for looser clusters and smaller number for stricter     clusters
 ## Running the script
 ```bash
 python script.py
