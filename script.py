@@ -453,55 +453,9 @@ class ImageGUI:
             )
         print("-" * 50)
 
-    def process_single_image_to_file(self, file_path, output_dir):
-            """Run the full detection pipeline on one image and save the result."""
-            image = Image.open(file_path).convert("RGB")
-            image_array = np.array(image)
-
-            detected_image, _, valid_faces, debug_info = self.detect_faces(image_array)
-            landmarks_per_face = self.detect_landmarks(image_array, valid_faces)
-
-            landmarks_per_face.sort(key=lambda face_data: face_data["box"][0])
-
-            detected_image = self.draw_landmarks(detected_image, landmarks_per_face)
-
-            aligned_faces = []
-            for face_data in landmarks_per_face:
-                aligned_face, transform_matrix = self.align_and_crop_face(image_array, face_data)
-                aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
-                aligned_faces.append(aligned_face)
-
-            detected_image = self.place_faces_in_corners(detected_image, aligned_faces)
-
-            # Debug output to console
-            image_name = os.path.basename(file_path)
-            print(f"\nImage: {image_name}")
-            print("Raw detections debug:")
-            for item in debug_info:
-                x, y, w, h, confidence, skin_ratio = item
-                print(
-                    f"  Box {(x, y, w, h)} "
-                    f"confidence={confidence:.3f} "
-                    f"skin_ratio={skin_ratio:.3f}"
-                )
-            print("Landmarks:")
-            for face_data in landmarks_per_face:
-                print(
-                    f"  right_eye={face_data['right_eye']} "
-                    f"left_eye={face_data['left_eye']} "
-                    f"nose={face_data['nose']}"
-                )
-            print("-" * 50)
-
-            # Save result to output directory, preserving original filename
-            output_path = os.path.join(output_dir, image_name)
-            result_pil = Image.fromarray(detected_image)
-            result_pil.save(output_path)
-
-            return len(valid_faces)
 
     #Runs the full face detection process on one image but saves the results insteads of displaying it (for bulk process use only)
-    def process_single_image_to_file(self, file_path, output_dir):
+    def process_single_image_to_file(self, file_path):
             image = Image.open(file_path).convert("RGB")
             image_array = np.array(image)
 
@@ -512,8 +466,8 @@ class ImageGUI:
 
             detected_image = self.draw_landmarks(detected_image, landmarks_per_face)
 
-            aligned_faces_clean = []   # no landmarks — used for clustering and grid display
-            aligned_faces_marked = []  # with landmarks — used for corner insets on saved image
+            aligned_faces_clean = []   # no landmarks — for clustering and grid display
+            aligned_faces_marked = []  # with landmarks — for saved result images
             for face_data in landmarks_per_face:
                 aligned_face, transform_matrix = self.align_and_crop_face(image_array, face_data)
                 if transform_matrix is not None:
@@ -563,19 +517,16 @@ class ImageGUI:
  
         X = np.array(vectors)
  
-        # --- DBSCAN clustering ---
-        # eps: max Euclidean distance between two faces to be considered neighbours
-        #      dlib embeddings work well in range 0.4–0.6; lower = stricter (more clusters)
-        # min_samples: minimum faces in a neighbourhood to form a core point
-        #              set to 1 so even a single unique face forms its own cluster
-        EPS = 0.55         # <-- tune this to adjust cluster sensitivity
-        MIN_SAMPLES = 1    # <-- keep at 1 so lone faces still get an identity
+        # DBSCAN clustering
+
+        # eps = max Euclidean distance between two faces to be considered under the same "identity" (cluster/neighbor)
+        # dlib embeddings work well in range 0.4–0.6; lower = stricter (more clusters)
+        EPS = 0.55         # tune this to adjust cluster sensitivity
+        MIN_SAMPLES = 1    #keep this value 1 so unique, singular faces only found once still get an identity/cluster of its own
         db = DBSCAN(eps=EPS, min_samples=MIN_SAMPLES, metric="euclidean").fit(X)
         raw_labels = db.labels_
  
-        # Remap labels to 0-based consecutive integers (DBSCAN uses -1 for noise;
-        # with min_samples=1 there should be no noise, but handle it just in case
-        # by assigning each noise point its own unique cluster)
+        # Remap labels to 0-based consecutive integers (DBSCAN uses -1 for noise, with min_samples=1 there should be no noise, but handle it just in case by assigning each noise point its own unique cluster)
         label_map = {}
         next_id = 0
         labels = []
@@ -598,17 +549,17 @@ class ImageGUI:
         return labels, num_clusters
     
     def build_identity_grid(self, face_crops, labels, num_clusters):
-        FACE_SIZE  = 125   # each thumbnail is 125x125 (same as align_and_crop_face output)
-        PADDING    = 6     # pixels between thumbnails
-        LABEL_H    = 20    # height of the cluster-label bar above each row
-        BG_COLOUR  = (40, 40, 40)   # dark background
+        FACE_SIZE  = 125   # each thumbnail is 125x125 (edit to increase size)
+        PADDING    = 6
+        LABEL_H    = 20    # height of the cluster-label
+        BG_COLOUR  = (40, 40, 40) #bg color
  
         # Group faces by cluster, preserving detection order within each cluster
         clusters = {}
         for i, label in enumerate(labels):
             clusters.setdefault(label, []).append(face_crops[i])
  
-        # Sort clusters so the biggest identity group appears first
+        # Sort clusters so the cluster group with the highest count appears first
         sorted_clusters = sorted(clusters.items(), key=lambda kv: -len(kv[1]))
  
         max_cols = max(len(v) for v in clusters.values()) if clusters else 1
@@ -619,24 +570,31 @@ class ImageGUI:
  
         grid = np.full((grid_h, grid_w, 3), BG_COLOUR, dtype=np.uint8)
  
-        # Distinct hues for cluster border colours (cycling if many clusters)
-        hues = [0, 120, 240, 60, 180, 300, 30, 150, 270, 90]
+        # Distinct hues for cluster border colours (cycling if more than 12 clusters)
+        distinct_colours = [
+            (220, 50,  50),   # red
+            (50,  120, 220),  # blue
+            (50,  200, 50),   # green
+            (220, 180, 50),   # yellow
+            (180, 50,  220),  # purple
+            (50,  210, 210),  # cyan
+            (220, 120, 50),   # orange
+            (220, 50,  150),  # pink
+            (100, 220, 100),  # light green
+            (50,  50,  200),  # dark blue
+            (200, 100, 50),   # brown
+            (150, 220, 50),   # lime
+        ]
+ 
  
         for row_idx, (cid, faces) in enumerate(sorted_clusters):
             y_top = PADDING + row_idx * (FACE_SIZE + PADDING + LABEL_H)
  
             # Choose a border colour for this cluster
-            hue = hues[row_idx % len(hues)]
-            hsv_colour = np.uint8([[[hue % 180, 220, 220]]])
-            bgr_colour = cv2.cvtColor(hsv_colour, cv2.COLOR_HSV2BGR)[0][0]
-            border_colour = (int(bgr_colour[2]), int(bgr_colour[1]), int(bgr_colour[0]))  # to RGB
+            border_colour = distinct_colours[row_idx % len(distinct_colours)]
  
-            # Draw a small cluster label bar
-            label_text = f"Identity {row_idx + 1}  ({len(faces)} face{'s' if len(faces) != 1 else ''})"
+            # Draw a thin coloured bar to separate rows (no text)
             label_bar = np.full((LABEL_H, grid_w - PADDING * 2, 3), border_colour, dtype=np.uint8)
-            # Convert colour to something readable as text background
-            cv2.putText(label_bar, label_text, (4, LABEL_H - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
             grid[y_top:y_top + LABEL_H, PADDING:grid_w - PADDING] = label_bar
  
             y_face = y_top + LABEL_H
@@ -644,6 +602,7 @@ class ImageGUI:
                 x_face = PADDING + col_idx * (FACE_SIZE + PADDING)
                 # Place face thumbnail
                 grid[y_face:y_face + FACE_SIZE, x_face:x_face + FACE_SIZE] = face
+                
                 # Draw coloured border around thumbnail
                 cv2.rectangle(grid,
                               (x_face, y_face),
@@ -655,12 +614,12 @@ class ImageGUI:
 
  
     def bulk_processing(self):
-        # Let the user pick a folder of input images
+        # Lets the user pick a folder of input images
         folder_path = filedialog.askdirectory(title="Select Folder Containing Images")
         if not folder_path:
             return
 
-        # Collect all supported image files in the selected folder (non-recursive)
+        # Collect all supported image files in the selected folder
         supported_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".gif"}
         image_files = [
             os.path.join(folder_path, f)
@@ -676,6 +635,7 @@ class ImageGUI:
 
         # Create output subfolder next to selected folder
         output_dir = os.path.join(os.path.dirname(folder_path), "Processed_Images")
+
         # If folder exists, clear all files inside it; otherwise create it
         if os.path.exists(output_dir):
             for f in os.listdir(output_dir):
@@ -694,8 +654,8 @@ class ImageGUI:
         all_face_crops = []
         bulk_start = time.time()
 
+        # Update status for each image so the user can see progress (also for testing purposes)
         for idx, file_path in enumerate(image_files, start=1):
-            # Update status for each image so the user can see progress
             self.message_1.configure(
                 text=f"Processing image {idx} of {len(image_files)}: "
                         f"{os.path.basename(file_path)}"
@@ -703,7 +663,7 @@ class ImageGUI:
             self.master.update_idletasks()
 
             try:
-                faces_found, crops = self.process_single_image_to_file(file_path, output_dir)
+                faces_found, crops = self.process_single_image_to_file(file_path)
                 total_faces += faces_found
                 all_face_crops.extend(crops)
             except Exception as exc:
@@ -719,36 +679,25 @@ class ImageGUI:
 
         labels, num_clusters = self.cluster_faces(all_face_crops)
 
- # Group face crops by cluster label
+        # Group face crops by cluster label
         cluster_face_counts = {}
         for face_idx, label in enumerate(labels):
             cluster_face_counts.setdefault(label, []).append(face_idx)
-        # Map cluster label → identity number (1-based, sorted by cluster label)
+
+        # Map cluster label = identity number
         sorted_labels = sorted(cluster_face_counts.keys())
         for identity_num, label in enumerate(sorted_labels, start=1):
             for face_num, face_idx in enumerate(cluster_face_counts[label], start=1):
                 crop = all_face_crops[face_idx]
                 filename = f"Identity_{identity_num}_face_{face_num}.jpg"
-                save_path = os.path.join(output_dir, filename)
+                save_path = os.path.join(filename)
                 Image.fromarray(crop).save(save_path)
 
-        # --- Build identity grid image and display in right panel ---
+        #Building the identity grid image to be displayed in right panel for bulk process results
         if all_face_crops:
             grid_array = self.build_identity_grid(all_face_crops, labels, num_clusters)
 
-            # Add summary text banner below the grid
-            BANNER_H  = 32
-            BANNER_BG = (20, 20, 20)
-            banner = np.full((BANNER_H, grid_array.shape[1], 3), BANNER_BG, dtype=np.uint8)
-            summary = (
-                f"Total {success_count} image(s) processed in {elapsed:.1f}s.  "
-                f"{total_faces} face(s) detected corresponding to "
-                f"{num_clusters} unique identit{'y' if num_clusters == 1 else 'ies'}."
-            )
-            cv2.putText(banner, summary, (6, BANNER_H - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1, cv2.LINE_AA)
-
-            combined = np.vstack([grid_array, banner])
+            combined = grid_array
 
             # Display the first input image in the left panel
             try:
@@ -767,7 +716,7 @@ class ImageGUI:
             self.filtered_label.configure(image=grid_photo)
             self.filtered_label.image = grid_photo
 
-        # Status messages
+        #Result messages
         summary_text = (
             f"Total {success_count} image(s) processed in {elapsed:.1f} seconds. "
             f"{total_faces} face(s) detected corresponding to "
