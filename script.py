@@ -412,8 +412,9 @@ class ImageGUI:
         aligned_faces = []
         for face_data in landmarks_per_face:
             aligned_face, transform_matrix = self.align_and_crop_face(original_array, face_data)
-            aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
-            aligned_faces.append(aligned_face)
+            if transform_matrix is not None:
+                aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
+                aligned_faces.append(aligned_face)
 
         # Paste aligned faces into the four corners of the output image
         detected_image = self.place_faces_in_corners(detected_image, aligned_faces)
@@ -452,53 +453,6 @@ class ImageGUI:
                 f"nose={face_data['nose']}"
             )
         print("-" * 50)
-
-    def process_single_image_to_file(self, file_path, output_dir):
-            """Run the full detection pipeline on one image and save the result."""
-            image = Image.open(file_path).convert("RGB")
-            image_array = np.array(image)
-
-            detected_image, _, valid_faces, debug_info = self.detect_faces(image_array)
-            landmarks_per_face = self.detect_landmarks(image_array, valid_faces)
-
-            landmarks_per_face.sort(key=lambda face_data: face_data["box"][0])
-
-            detected_image = self.draw_landmarks(detected_image, landmarks_per_face)
-
-            aligned_faces = []
-            for face_data in landmarks_per_face:
-                aligned_face, transform_matrix = self.align_and_crop_face(image_array, face_data)
-                aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
-                aligned_faces.append(aligned_face)
-
-            detected_image = self.place_faces_in_corners(detected_image, aligned_faces)
-
-            # Debug output to console
-            image_name = os.path.basename(file_path)
-            print(f"\nImage: {image_name}")
-            print("Raw detections debug:")
-            for item in debug_info:
-                x, y, w, h, confidence, skin_ratio = item
-                print(
-                    f"  Box {(x, y, w, h)} "
-                    f"confidence={confidence:.3f} "
-                    f"skin_ratio={skin_ratio:.3f}"
-                )
-            print("Landmarks:")
-            for face_data in landmarks_per_face:
-                print(
-                    f"  right_eye={face_data['right_eye']} "
-                    f"left_eye={face_data['left_eye']} "
-                    f"nose={face_data['nose']}"
-                )
-            print("-" * 50)
-
-            # Save result to output directory, preserving original filename
-            output_path = os.path.join(output_dir, image_name)
-            result_pil = Image.fromarray(detected_image)
-            result_pil.save(output_path)
-
-            return len(valid_faces)
 
     #Runs the full face detection process on one image but saves the results insteads of displaying it (for bulk process use only)
     def process_single_image_to_file(self, file_path, output_dir):
@@ -543,9 +497,12 @@ class ImageGUI:
                 )
             print("-" * 50)
 
-            return len(valid_faces), aligned_faces_clean
-    
+            # Save result to output directory, preserving original filename
+            output_path = os.path.join(output_dir, image_name)
+            result_pil = Image.fromarray(detected_image)
+            result_pil.save(output_path)
 
+            return len(valid_faces), aligned_faces_clean
 
     def cluster_faces(self, face_crops):
         if not face_crops:
@@ -555,7 +512,8 @@ class ImageGUI:
         vectors = []
         for crop in face_crops:
             dlib_img = np.array(crop)
-            rect = dlib.rectangle(0, 0, dlib_img.shape[1], dlib_img.shape[0])
+            h, w = dlib_img.shape[:2]
+            rect = dlib.rectangle(0, 0, w - 1, h - 1)
             shape = self.landmark_predictor(dlib_img, rect)
             descriptor = self.face_recognizer.compute_face_descriptor(dlib_img, shape)
             vec = np.array(descriptor, dtype=np.float32)
@@ -566,7 +524,7 @@ class ImageGUI:
         # Euclidean distance is below THRESHOLD (i.e. likely the same person)
         # THRESHOLD: max distance to connect two faces
         #   lower = stricter (more clusters); recommended range 0.4–0.6
-        THRESHOLD = 0.55   # <-- tune this to adjust cluster sensitivity
+        THRESHOLD = 0.50   # <-- tune this to adjust cluster sensitivity
  
         G = nx.Graph()
         G.add_nodes_from(range(len(vectors)))
@@ -574,6 +532,7 @@ class ImageGUI:
         for i in range(len(vectors)):
             for j in range(i + 1, len(vectors)):
                 dist = float(np.linalg.norm(vectors[i] - vectors[j]))
+                print(f"Distance face {i} - face {j}: {dist:.3f}")
                 if dist < THRESHOLD:
                     # Closer faces get stronger edge weights
                     G.add_edge(i, j, weight=1.0 - dist)
