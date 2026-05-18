@@ -495,10 +495,6 @@ class ImageGUI:
                     f"left_eye={face_data['left_eye']} "
                     f"nose={face_data['nose']}"
                 )
-            # Save result to output directory, preserving original filename
-            output_path = os.path.join(output_dir, image_name)
-            result_pil = Image.fromarray(detected_image)
-            result_pil.save(output_path)
 
             return len(valid_faces), aligned_faces_clean
     
@@ -533,7 +529,6 @@ class ImageGUI:
  
         # Remap labels to 0-based consecutive integers (DBSCAN uses -1 for noise, with min_samples=1 there should be no noise, but handle it just in case by assigning each noise point its own unique cluster)
         label_map = {}
-        next_id = 0
         labels = []
         next_noise_label = (max(raw_labels) + 1) if len(raw_labels) > 0 and max(raw_labels) >= 0 else 0
 
@@ -553,7 +548,7 @@ class ImageGUI:
         print(
             f"\nIdentity clustering using DBSCAN: {len(face_crops)} face(s) "
             f"→ {num_clusters} unique identity/identities "
-            f"(eps={DBSCAN_EPS}, min_samples={MIN_SAMPLES})"
+            f"(eps={EPS}, min_samples={MIN_SAMPLES})"
         )
         for cid in range(num_clusters):
             members = [i for i, label in enumerate(labels) if label == cid]
@@ -692,7 +687,6 @@ class ImageGUI:
 
         labels, num_clusters = self.cluster_faces(all_face_crops)
 
-        # Group face crops by cluster label
         # Group face crops by cluster label
         cluster_face_counts = {}
         for face_idx, label in enumerate(labels):
