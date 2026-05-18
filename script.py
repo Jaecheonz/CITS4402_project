@@ -454,8 +454,8 @@ class ImageGUI:
             )
         print("-" * 50)
 
-    #Runs the full face detection process on one image but saves the results insteads of displaying it (for bulk process use only)
-    def process_single_image_to_file(self, file_path):
+    #Runs the full detection process on an array instead of a singular image, and returns an array of images instead of a single one(for bulk process use only)
+    def process_bulk_to_array(self, file_path):
             image = Image.open(file_path).convert("RGB")
             image_array = np.array(image)
 
@@ -671,7 +671,7 @@ class ImageGUI:
             self.master.update_idletasks()
 
             try:
-                faces_found, crops = self.process_single_image_to_file(file_path)
+                faces_found, crops = self.process_bulk_to_array(file_path)
                 total_faces += faces_found
                 all_face_crops.extend(crops)
             except Exception as exc:
@@ -693,6 +693,7 @@ class ImageGUI:
             cluster_face_counts.setdefault(label, []).append(face_idx)
 
         # Map cluster label = identity number
+        #This is the part where face crops from the array is assigned the correct label and saved individually.
         sorted_labels = sorted(cluster_face_counts.keys())
         for identity_num, label in enumerate(sorted_labels, start=1):
             for face_num, face_idx in enumerate(cluster_face_counts[label], start=1):
