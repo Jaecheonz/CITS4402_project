@@ -420,7 +420,7 @@ class ImageGUI:
 
         end_time = time.time()
 
-        # Convert detected result back to PIL for display
+        # Convert detected back to PIL for display
         detected_pil = Image.fromarray(detected_image)
         display_output = self.resize_image(detected_pil)
         output_photo = ImageTk.PhotoImage(display_output)
@@ -453,7 +453,6 @@ class ImageGUI:
             )
         print("-" * 50)
 
-
     #Runs the full face detection process on one image but saves the results insteads of displaying it (for bulk process use only)
     def process_single_image_to_file(self, file_path):
             image = Image.open(file_path).convert("RGB")
@@ -466,8 +465,8 @@ class ImageGUI:
 
             detected_image = self.draw_landmarks(detected_image, landmarks_per_face)
 
-            aligned_faces_clean = []   # no landmarks — for clustering and grid display
-            aligned_faces_marked = []  # with landmarks — for saved result images
+            aligned_faces_clean = []   # for clustering and grid display
+            aligned_faces_marked = []  # for saved result images
             for face_data in landmarks_per_face:
                 aligned_face, transform_matrix = self.align_and_crop_face(image_array, face_data)
                 if transform_matrix is not None:
@@ -519,7 +518,6 @@ class ImageGUI:
  
         # DBSCAN clustering
 
-        # eps = max Euclidean distance between two faces to be considered under the same "identity" (cluster/neighbor)
         # dlib embeddings work well in range 0.4–0.6; lower = stricter (more clusters)
         EPS = 0.55         # tune this to adjust cluster sensitivity
         MIN_SAMPLES = 1    #keep this value 1 so unique, singular faces only found once still get an identity/cluster of its own
@@ -549,10 +547,10 @@ class ImageGUI:
         return labels, num_clusters
     
     def build_identity_grid(self, face_crops, labels, num_clusters):
-        FACE_SIZE  = 125   # each thumbnail is 125x125 (edit to increase size)
+        FACE_SIZE  = 125   # edit to increase thumbnail size
         PADDING    = 6
-        LABEL_H    = 20    # height of the cluster-label
-        BG_COLOUR  = (40, 40, 40) #bg color
+        LABEL_H    = 20
+        BG_COLOUR  = (40, 40, 40)
  
         # Group faces by cluster, preserving detection order within each cluster
         clusters = {}
@@ -690,7 +688,7 @@ class ImageGUI:
             for face_num, face_idx in enumerate(cluster_face_counts[label], start=1):
                 crop = all_face_crops[face_idx]
                 filename = f"Identity_{identity_num}_face_{face_num}.jpg"
-                save_path = os.path.join(filename)
+                save_path = os.path.join(output_dir, filename)
                 Image.fromarray(crop).save(save_path)
 
         #Building the identity grid image to be displayed in right panel for bulk process results
