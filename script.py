@@ -412,8 +412,9 @@ class ImageGUI:
         aligned_faces = []
         for face_data in landmarks_per_face:
             aligned_face, transform_matrix = self.align_and_crop_face(original_array, face_data)
-            aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
-            aligned_faces.append(aligned_face)
+            if transform_matrix is not None:
+                aligned_face = self.draw_landmarks_on_aligned_face(aligned_face, face_data, transform_matrix)
+                aligned_faces.append(aligned_face)
 
         # Paste aligned faces into the four corners of the output image
         detected_image = self.place_faces_in_corners(detected_image, aligned_faces)
@@ -494,7 +495,10 @@ class ImageGUI:
                     f"left_eye={face_data['left_eye']} "
                     f"nose={face_data['nose']}"
                 )
-            print("-" * 50)
+            # Save result to output directory, preserving original filename
+            output_path = os.path.join(output_dir, image_name)
+            result_pil = Image.fromarray(detected_image)
+            result_pil.save(output_path)
 
             return len(valid_faces), aligned_faces_clean
     
@@ -503,12 +507,15 @@ class ImageGUI:
     def cluster_faces(self, face_crops):
         if not face_crops:
             return [], 0
- 
-        # Compute 128-d dlib face embeddings for each crop
+
+        # Compute 128-dimensional dlib face embeddings for each aligned face crop.
         vectors = []
         for crop in face_crops:
             dlib_img = np.array(crop)
-            rect = dlib.rectangle(0, 0, dlib_img.shape[1], dlib_img.shape[0])
+            h, w = dlib_img.shape[:2]
+
+            # The crop is already an aligned 125 x 125 face, so use the full crop as the face region.
+            rect = dlib.rectangle(0, 0, w - 1, h - 1)
             shape = self.landmark_predictor(dlib_img, rect)
             descriptor = self.face_recognizer.compute_face_descriptor(dlib_img, shape)
             vec = np.array(descriptor, dtype=np.float32)
@@ -528,22 +535,30 @@ class ImageGUI:
         label_map = {}
         next_id = 0
         labels = []
-        for l in raw_labels:
-            if l == -1:
-                labels.append(next_id)
-                next_id += 1
+        next_noise_label = (max(raw_labels) + 1) if len(raw_labels) > 0 and max(raw_labels) >= 0 else 0
+
+        for raw_label in raw_labels:
+            if raw_label == -1:
+                labels.append(next_noise_label)
+                next_noise_label += 1
             else:
-                if l not in label_map:
-                    label_map[l] = next_id
-                    next_id += 1
-                labels.append(label_map[l])
- 
-        num_clusters = next_id
-        print(f"\nIdentity clustering: {len(face_crops)} face(s) → {num_clusters} unique identity/identities")
+                labels.append(int(raw_label))
+
+        # Remap labels to consecutive 0-based integers so filenames and grid rows are clean.
+        unique_labels = sorted(set(labels))
+        label_map = {old_label: new_label for new_label, old_label in enumerate(unique_labels)}
+        labels = [label_map[label] for label in labels]
+        num_clusters = len(unique_labels)
+
+        print(
+            f"\nIdentity clustering using DBSCAN: {len(face_crops)} face(s) "
+            f"→ {num_clusters} unique identity/identities "
+            f"(eps={DBSCAN_EPS}, min_samples={MIN_SAMPLES})"
+        )
         for cid in range(num_clusters):
-            members = [i for i, l in enumerate(labels) if l == cid]
+            members = [i for i, label in enumerate(labels) if label == cid]
             print(f"  Cluster {cid}: face indices {members}")
- 
+
         return labels, num_clusters
     
     def build_identity_grid(self, face_crops, labels, num_clusters):
@@ -677,6 +692,7 @@ class ImageGUI:
 
         labels, num_clusters = self.cluster_faces(all_face_crops)
 
+        # Group face crops by cluster label
         # Group face crops by cluster label
         cluster_face_counts = {}
         for face_idx, label in enumerate(labels):
