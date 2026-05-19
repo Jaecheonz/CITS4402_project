@@ -19,6 +19,7 @@ pip install -r requirements.txt
 ```
 ### 4. Download the face detector and landmark model files
 ```bash
+# If you accessing this from the zip file, models + all the files required inside should be already present. If accessing from Github, proceed with the commands below.
 # If having difficulties running the commands, download the file from the link and move it into models/
 mkdir -p models
 
