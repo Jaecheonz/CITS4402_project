@@ -19,6 +19,7 @@ pip install -r requirements.txt
 ```
 ### 4. Download the face detector and landmark model files
 ```bash
+# If having difficulties running the commands, download the file from the link and move it into models/
 mkdir -p models
 
 # OpenCV DNN face detector files
@@ -56,8 +57,8 @@ bzip2 -dk models/dlib_face_recognition_resnet_model_v1.dat.bz2
 - the paths are correct
 - all files exist
 - none of the files are empty
-- the 2 `.bz2` files has been extracted so that `shape_predictor_5_face_landmarks.dat` and `dlib_face_recognition_resnet_model_v1.dat` is present
-- To control the strictness in clustering faces (Chinese whispers), change the epsilon value in line 569. Larger number for less clusters, looser clusters and smaller number for more clusters, stricter     clusters
+- the 2 `.bz2` files has been extracted so that `shape_predictor_5_face_landmarks.dat` and `dlib_face_recognition_resnet_model_v1.dat` are present
+- To control the strictness in clustering faces (DBSCAN), change the EPS value (Max Euclidean Distance) in line 551 of script. Larger number for less clusters, looser clusters and smaller number for more clusters, stricter clusters
 ## Running the script
 ```bash
 python script.py
