@@ -262,17 +262,18 @@ class ImageGUI:
             nose = face_data["nose"]
 
             # Draw circles for the 3 required landmarks
-            cv2.circle(output_image, right_eye, 4, (255, 0, 0), -1)   # blue
+            cv2.circle(output_image, right_eye, 4, (255, 0, 0), -1)   # red
             cv2.circle(output_image, left_eye, 4, (0, 255, 0), -1)    # green
-            cv2.circle(output_image, nose, 4, (0, 0, 255), -1)        # red
+            cv2.circle(output_image, nose, 4, (0, 0, 255), -1)        # blue
 
         return output_image
     
     def align_and_crop_face(self, image_array, face_data):
         eye_a = face_data["right_eye"]
         eye_b = face_data["left_eye"]
+        nose = face_data["nose"]
 
-        # Sort eyes by x-position so left-side eye is always first
+        # Sort eyes by x-position so image-left eye is always first
         if eye_a[0] < eye_b[0]:
             left_eye_img = eye_a
             right_eye_img = eye_b
@@ -282,42 +283,67 @@ class ImageGUI:
 
         left_eye_img = np.array(left_eye_img, dtype=np.float32)
         right_eye_img = np.array(right_eye_img, dtype=np.float32)
+        nose_img = np.array(nose, dtype=np.float32)
 
-        # Eye direction
         dx = right_eye_img[0] - left_eye_img[0]
         dy = right_eye_img[1] - left_eye_img[1]
-        angle = np.degrees(np.arctan2(dy, dx))
 
-        # Eye distance scaling
         src_eye_distance = np.sqrt(dx * dx + dy * dy)
         dst_eye_distance = 85 - 40
 
         if src_eye_distance < 1:
             return np.zeros((125, 125, 3), dtype=np.uint8), None
 
+        # Rotate in the opposite direction to flatten the eyes
+        angle = np.degrees(np.arctan2(dy, dx))
         scale = dst_eye_distance / src_eye_distance
 
-        # Midpoint between the eyes in source image
         eyes_center_src = (
             (left_eye_img[0] + right_eye_img[0]) / 2.0,
             (left_eye_img[1] + right_eye_img[1]) / 2.0
         )
 
-        # Midpoint between target eye locations
         eyes_center_dst = (
             (40 + 85) / 2.0,
             40
         )
 
-        # Rotation + scale matrix
-        transform_matrix = cv2.getRotationMatrix2D(eyes_center_src, angle, scale)
+        # Rotation + uniform scale only
+        transform_matrix = cv2.getRotationMatrix2D(
+            eyes_center_src,
+            angle,
+            scale
+        )
 
-        # Translate so eye midpoint lands in the target position
+        # First translation: put the eye midpoint in the target location
         transform_matrix[0, 2] += eyes_center_dst[0] - eyes_center_src[0]
         transform_matrix[1, 2] += eyes_center_dst[1] - eyes_center_src[1]
 
-        # Warp to aligned 125 x 125 portrait
-        aligned_face = cv2.warpAffine(image_array, transform_matrix, (125, 125))
+        # Check where the nose would land after this transform
+        nose_x = transform_matrix[0, 0] * nose_img[0] + transform_matrix[0, 1] * nose_img[1] + transform_matrix[0, 2]
+        nose_y = transform_matrix[1, 0] * nose_img[0] + transform_matrix[1, 1] * nose_img[1] + transform_matrix[1, 2]
+
+        target_nose = np.array([63, 70], dtype=np.float32)
+
+        # Use the nose only for a small centering correction, not stretching
+        nose_shift_x = target_nose[0] - nose_x
+        nose_shift_y = target_nose[1] - nose_y
+
+        # Limit correction so bad nose detections do not throw the face away
+        nose_shift_x = np.clip(nose_shift_x, -15, 15)
+        nose_shift_y = np.clip(nose_shift_y, -15, 15)
+
+        transform_matrix[0, 2] += nose_shift_x * 0.5
+        transform_matrix[1, 2] += nose_shift_y * 0.5
+
+        aligned_face = cv2.warpAffine(
+            image_array,
+            transform_matrix,
+            (125, 125),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(0, 0, 0)
+        )
 
         return aligned_face, transform_matrix
 
