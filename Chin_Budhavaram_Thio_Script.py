@@ -1,3 +1,8 @@
+# Student 1: Joshua Chin 23706774
+# Student 2: Adi Budhavaram 23086947
+# Student 3: Katherine Thio 23859997
+
+
 import tkinter as tk
 from tkinter import filedialog
 from PIL import ImageTk, Image
