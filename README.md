@@ -17,6 +17,11 @@ source .venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
+- For linux/MacOS users only (Certain Linux/MacOS python versions may not have tkinter built-in)
+```bash
+sudo apt install python3-tk
+```
+
 ### 4. Download the face detector and landmark model files
 - If accessing this from the submitted zip file, models + all the files required inside should be already present. If accessing from Github, proceed with the commands below.
 - If having difficulties running the commands, download the file from the link and move it into models/
